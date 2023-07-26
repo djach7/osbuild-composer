@@ -71,6 +71,13 @@ EOFKS
     echo "============================"
 }
 
+# workaround for bug https://bugzilla.redhat.com/show_bug.cgi?id=2213660
+if [[ "$VERSION_ID" == "9.3"  || "$VERSION_ID" == "9" ]]; then
+    sudo tee /etc/sysconfig/libvirtd << EOF > /dev/null
+LIBVIRTD_ARGS=
+EOF
+fi
+
 # Start libvirtd and test it.
 greenprint "🚀 Starting libvirt daemon"
 sudo systemctl start libvirtd
@@ -355,6 +362,10 @@ sudo qemu-img create -f qcow2 "${LIBVIRT_IMAGE_PATH}" 20G
 #########################
 # Install image via anaconda.
 
+VIRT_LOG="$ARTIFACTS/installers-sh-virt-install-console.log"
+touch "$VIRT_LOG"
+sudo chown qemu:qemu "$VIRT_LOG"
+
 greenprint "💿 Install image via installer(ISO) on VM"
 sudo virt-install  --name="${IMAGE_KEY}"\
                    --disk path="${LIBVIRT_IMAGE_PATH}",format=qcow2 \
@@ -367,7 +378,8 @@ sudo virt-install  --name="${IMAGE_KEY}"\
                    --nographics \
                    --noautoconsole \
                    --wait=-1 \
-                   --noreboot
+                   --noreboot \
+                   --console pipe,source.path="$VIRT_LOG"
 
 
 # Start VM.
