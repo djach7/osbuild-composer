@@ -313,8 +313,11 @@ func (t *imageType) checkOptions(bp *blueprint.Blueprint, options distro.ImageOp
 				if customizations.GetFDO().DiunPubKeyRootCerts != "" {
 					diunSet++
 				}
+				if customizations.GetFDO().DiMfgStringTypeMacIface != "" {
+					diunSet++
+				}
 				if diunSet != 1 {
-					return warnings, fmt.Errorf("boot ISO image type %q requires specifying one of [FDO.DiunPubKeyHash,FDO.DiunPubKeyInsecure,FDO.DiunPubKeyRootCerts] configuration to install to", t.name)
+					return warnings, fmt.Errorf("boot ISO image type %q requires specifying one of [FDO.DiunPubKeyHash,FDO.DiunPubKeyInsecure,FDO.DiunPubKeyRootCerts,FDO.DiMfgStringTypeMacIface] configuration to install to", t.name)
 				}
 			}
 		} else if t.name == "edge-installer" {

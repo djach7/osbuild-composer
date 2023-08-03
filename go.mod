@@ -2,6 +2,8 @@ module github.com/osbuild/osbuild-composer
 
 go 1.19
 
+replace github.com/osbuild/images => /home/djachimo/rfe/images
+
 exclude github.com/mattn/go-sqlite3 v2.0.3+incompatible
 
 require (
