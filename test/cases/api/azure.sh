@@ -84,7 +84,8 @@ function createReqFile() {
     "packages": [
       "postgresql",
       "dummy"
-    ]${SUBSCRIPTION_BLOCK}${DIR_FILES_CUSTOMIZATION_BLOCK}${REPOSITORY_CUSTOMIZATION_BLOCK}
+    ]${SUBSCRIPTION_BLOCK}${DIR_FILES_CUSTOMIZATION_BLOCK}${REPOSITORY_CUSTOMIZATION_BLOCK}${OPENSCAP_CUSTOMIZATION_BLOCK}
+${TIMEZONE_CUSTOMIZATION_BLOCK}${FIREWALL_CUSTOMIZATION_BLOCK}
   },
   "image_request": {
     "architecture": "$ARCH",
@@ -110,9 +111,7 @@ function checkUploadStatusOptions() {
 
 # Log into Azure
 function cloud_login() {
-  set +x
   $AZURE_CMD login --service-principal --username "${V2_AZURE_CLIENT_ID}" --password "${V2_AZURE_CLIENT_SECRET}" --tenant "${AZURE_TENANT_ID}"
-  set -x
 }
 
 # Verify image in Azure

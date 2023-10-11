@@ -13,9 +13,9 @@ source /usr/libexec/tests/osbuild-composer/shared_lib.sh
 # Start firewalld
 sudo systemctl enable --now firewalld
 sudo pip3 install yq==v3.2.1
-# Install fdo packages (This cannot be done in the setup.sh because fdo-admin-cli is not available on fedora)
-# Install fdo-client and fdo-init to workaround bug https://bugzilla.redhat.com/show_bug.cgi?id=2230537
-sudo dnf install -y fdo-admin-cli fdo-client fdo-init
+
+sudo dnf install -y fdo-admin-cli
+
 # Start fdo-aio to have /etc/fdo/aio folder
 sudo systemctl enable --now fdo-aio
 # Wait until config file serviceinfo_api_server.yml exists

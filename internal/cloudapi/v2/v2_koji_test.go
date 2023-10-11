@@ -50,8 +50,15 @@ func TestKojiCompose(t *testing.T) {
 				Arch:   test_distro.TestArchName,
 				HostOS: test_distro.TestDistroName,
 				TargetResults: []*target.TargetResult{target.NewKojiTargetResult(&target.KojiTargetResultOptions{
-					ImageMD5:  "browns",
-					ImageSize: 42,
+					Image: &target.KojiOutputInfo{
+						Filename:     "test.img",
+						ChecksumType: target.ChecksumTypeMD5,
+						Checksum:     "browns",
+						Size:         42,
+					},
+				}, &target.OsbuildArtifact{
+					ExportFilename: "disk.img",
+					ExportName:     "image",
 				})},
 				OSBuildOutput: &osbuild.Result{
 					Success: true,
@@ -87,8 +94,15 @@ func TestKojiCompose(t *testing.T) {
 				Arch:   test_distro.TestArchName,
 				HostOS: test_distro.TestDistroName,
 				TargetResults: []*target.TargetResult{target.NewKojiTargetResult(&target.KojiTargetResultOptions{
-					ImageMD5:  "browns",
-					ImageSize: 42,
+					Image: &target.KojiOutputInfo{
+						Filename:     "test.img",
+						ChecksumType: target.ChecksumTypeMD5,
+						Checksum:     "browns",
+						Size:         42,
+					},
+				}, &target.OsbuildArtifact{
+					ExportFilename: "disk.img",
+					ExportName:     "image",
 				})},
 				OSBuildOutput: &osbuild.Result{
 					Success: true,
@@ -124,8 +138,15 @@ func TestKojiCompose(t *testing.T) {
 				Arch:   test_distro.TestArchName,
 				HostOS: test_distro.TestDistroName,
 				TargetResults: []*target.TargetResult{target.NewKojiTargetResult(&target.KojiTargetResultOptions{
-					ImageMD5:  "browns",
-					ImageSize: 42,
+					Image: &target.KojiOutputInfo{
+						Filename:     "test.img",
+						ChecksumType: target.ChecksumTypeMD5,
+						Checksum:     "browns",
+						Size:         42,
+					},
+				}, &target.OsbuildArtifact{
+					ExportFilename: "disk.img",
+					ExportName:     "image",
 				})},
 				OSBuildOutput: &osbuild.Result{
 					Success: true,
@@ -160,8 +181,15 @@ func TestKojiCompose(t *testing.T) {
 				Arch:   test_distro.TestArchName,
 				HostOS: test_distro.TestDistroName,
 				TargetResults: []*target.TargetResult{target.NewKojiTargetResult(&target.KojiTargetResultOptions{
-					ImageMD5:  "browns",
-					ImageSize: 42,
+					Image: &target.KojiOutputInfo{
+						Filename:     "test.img",
+						ChecksumType: target.ChecksumTypeMD5,
+						Checksum:     "browns",
+						Size:         42,
+					},
+				}, &target.OsbuildArtifact{
+					ExportFilename: "disk.img",
+					ExportName:     "image",
 				})},
 				OSBuildOutput: &osbuild.Result{
 					Success: false,
@@ -198,8 +226,15 @@ func TestKojiCompose(t *testing.T) {
 				Arch:   test_distro.TestArchName,
 				HostOS: test_distro.TestDistroName,
 				TargetResults: []*target.TargetResult{target.NewKojiTargetResult(&target.KojiTargetResultOptions{
-					ImageMD5:  "browns",
-					ImageSize: 42,
+					Image: &target.KojiOutputInfo{
+						Filename:     "test.img",
+						ChecksumType: target.ChecksumTypeMD5,
+						Checksum:     "browns",
+						Size:         42,
+					},
+				}, &target.OsbuildArtifact{
+					ExportFilename: "disk.img",
+					ExportName:     "image",
 				})},
 				OSBuildOutput: &osbuild.Result{
 					Success: true,
@@ -247,8 +282,15 @@ func TestKojiCompose(t *testing.T) {
 				Arch:   test_distro.TestArchName,
 				HostOS: test_distro.TestDistroName,
 				TargetResults: []*target.TargetResult{target.NewKojiTargetResult(&target.KojiTargetResultOptions{
-					ImageMD5:  "browns",
-					ImageSize: 42,
+					Image: &target.KojiOutputInfo{
+						Filename:     "test.img",
+						ChecksumType: target.ChecksumTypeMD5,
+						Checksum:     "browns",
+						Size:         42,
+					},
+				}, &target.OsbuildArtifact{
+					ExportFilename: "disk.img",
+					ExportName:     "image",
 				})},
 				OSBuildOutput: &osbuild.Result{
 					Success: true,
@@ -288,8 +330,15 @@ func TestKojiCompose(t *testing.T) {
 				Arch:   test_distro.TestArchName,
 				HostOS: test_distro.TestDistroName,
 				TargetResults: []*target.TargetResult{target.NewKojiTargetResult(&target.KojiTargetResultOptions{
-					ImageMD5:  "browns",
-					ImageSize: 42,
+					Image: &target.KojiOutputInfo{
+						Filename:     "test.img",
+						ChecksumType: target.ChecksumTypeMD5,
+						Checksum:     "browns",
+						Size:         42,
+					},
+				}, &target.OsbuildArtifact{
+					ExportFilename: "disk.img",
+					ExportName:     "image",
 				})},
 				OSBuildOutput: &osbuild.Result{
 					Success: true,
@@ -323,7 +372,7 @@ func TestKojiCompose(t *testing.T) {
 		},
 	}
 
-	emptyManifest := `{"version":"2","pipelines":[{"name":"build"},{"name":"os"}],"sources":{"org.osbuild.curl":{"items":{"":{"url":""}}}}}`
+	emptyManifest := `{"version":"2","pipelines":[{"name":"build"},{"name":"os"}],"sources":{"org.osbuild.curl":{"items":{"sha256:e50ddb78a37f5851d1a5c37a4c77d59123153c156e628e064b9daa378f45a2fe":{"url":""}}}}}`
 	expectedManifests := `{"manifests":[` + emptyManifest + `,` + emptyManifest + `],"kind":"ComposeManifests"}`
 	for idx, c := range cases {
 		name, version, release := "foo", "1", "2"

@@ -9,7 +9,7 @@
 
 %global goipath         github.com/osbuild/osbuild-composer
 
-Version:        89
+Version:        92
 
 %gometa
 
@@ -77,6 +77,11 @@ install -m 0755 -vd _bin
 export PATH=$PWD/_bin${PATH:+:$PATH}
 export GOPATH=$GO_BUILD_PATH:%{gopath}
 export GOFLAGS+=" -mod=vendor"
+%endif
+%if 0%{?fedora}
+# Fedora disables Go modules by default, but we want to use them.
+# Undefine the macro which disables it to use the default behavior.
+%undefine gomodulesmode
 %endif
 
 # Set the commit hash so that composer can report what source version

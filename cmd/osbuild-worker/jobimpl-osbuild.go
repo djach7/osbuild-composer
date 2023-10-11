@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -58,12 +60,20 @@ type AzureConfiguration struct {
 	UploadThreads int
 }
 
+type OCIConfiguration struct {
+	ClientParams *oci.ClientParams
+	Compartment  string
+	Bucket       string
+	Namespace    string
+}
+
 type OSBuildJobImpl struct {
 	Store            string
 	Output           string
 	KojiServers      map[string]kojiServer
 	GCPConfig        GCPConfiguration
 	AzureConfig      AzureConfiguration
+	OCIConfig        OCIConfiguration
 	AWSCreds         string
 	AWSBucket        string
 	S3Config         S3Configuration
@@ -177,6 +187,30 @@ func (impl *OSBuildJobImpl) getGCP(credentials []byte) (*gcp.GCP, error) {
 		logrus.Info("[GCP] 🔑 using Application Default Credentials via Google library")
 		return gcp.New(nil)
 	}
+}
+
+// Takes the worker config as a base and overwrites it with both t1 and t2's options
+func (impl *OSBuildJobImpl) getOCI(tcp oci.ClientParams) (oci.Client, error) {
+	var cp oci.ClientParams
+	if impl.OCIConfig.ClientParams != nil {
+		cp = *impl.OCIConfig.ClientParams
+	}
+	if tcp.User != "" {
+		cp.User = tcp.User
+	}
+	if tcp.Region != "" {
+		cp.Region = tcp.Region
+	}
+	if tcp.Tenancy != "" {
+		cp.Tenancy = tcp.Tenancy
+	}
+	if tcp.PrivateKey != "" {
+		cp.PrivateKey = tcp.PrivateKey
+	}
+	if tcp.Fingerprint != "" {
+		cp.Fingerprint = tcp.Fingerprint
+	}
+	return oci.NewClient(&cp)
 }
 
 func validateResult(result *worker.OSBuildJobResult, jobID string) {
@@ -308,6 +342,13 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 		}
 	}()
 
+	osbuildVersion, err := osbuild.OSBuildVersion()
+	if err != nil {
+		osbuildJobResult.JobError = clienterrors.WorkerClientError(clienterrors.ErrorBuildJob, "Error getting osbuild binary version", err)
+		return err
+	}
+	osbuildJobResult.OSBuildVersion = osbuildVersion
+
 	// Read the job specification
 	var jobArgs worker.OSBuildJob
 	err = job.Args(&jobArgs)
@@ -316,6 +357,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 	}
 
 	// In case the manifest is empty, try to get it from dynamic args
+	var manifestInfo *worker.ManifestInfo
 	if len(jobArgs.Manifest) == 0 {
 		if job.NDynamicArgs() > 0 {
 			var manifestJR worker.ManifestJobByIDResult
@@ -341,6 +383,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 				return nil
 			}
 			jobArgs.Manifest = manifestJR.Manifest
+			manifestInfo = &manifestJR.ManifestInfo
 		}
 
 		if len(jobArgs.Manifest) == 0 {
@@ -423,9 +466,10 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 
 	for _, jobTarget := range jobArgs.Targets {
 		var targetResult *target.TargetResult
+		artifact := jobTarget.OsbuildArtifact
 		switch targetOptions := jobTarget.Options.(type) {
 		case *target.WorkerServerTargetOptions:
-			targetResult = target.NewWorkerServerTargetResult()
+			targetResult = target.NewWorkerServerTargetResult(&artifact)
 			var f *os.File
 			imagePath := path.Join(outputDirectory, jobTarget.OsbuildArtifact.ExportName, jobTarget.OsbuildArtifact.ExportFilename)
 			f, err = os.Open(imagePath)
@@ -441,7 +485,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			}
 
 		case *target.VMWareTargetOptions:
-			targetResult = target.NewVMWareTargetResult()
+			targetResult = target.NewVMWareTargetResult(&artifact)
 			credentials := vmware.Credentials{
 				Username:   targetOptions.Username,
 				Password:   targetOptions.Password,
@@ -495,7 +539,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			}
 
 		case *target.AWSTargetOptions:
-			targetResult = target.NewAWSTargetResult(nil)
+			targetResult = target.NewAWSTargetResult(nil, &artifact)
 			a, err := impl.getAWS(targetOptions.Region, targetOptions.AccessKeyID, targetOptions.SecretAccessKey, targetOptions.SessionToken)
 			if err != nil {
 				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorInvalidConfig, err.Error(), nil)
@@ -552,7 +596,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			}
 
 		case *target.AWSS3TargetOptions:
-			targetResult = target.NewAWSS3TargetResult(nil)
+			targetResult = target.NewAWSS3TargetResult(nil, &artifact)
 			a, bucket, err := impl.getAWSForS3Target(targetOptions)
 			if err != nil {
 				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorInvalidConfig, err.Error(), nil)
@@ -572,7 +616,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			targetResult.Options = &target.AWSS3TargetResultOptions{URL: url}
 
 		case *target.AzureTargetOptions:
-			targetResult = target.NewAzureTargetResult()
+			targetResult = target.NewAzureTargetResult(&artifact)
 			azureStorageClient, err := azure.NewStorageClient(targetOptions.StorageAccount, targetOptions.StorageAccessKey)
 			if err != nil {
 				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorInvalidConfig, err.Error(), nil)
@@ -600,7 +644,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			}
 
 		case *target.GCPTargetOptions:
-			targetResult = target.NewGCPTargetResult(nil)
+			targetResult = target.NewGCPTargetResult(nil, &artifact)
 			ctx := context.Background()
 
 			g, err := impl.getGCP(targetOptions.Credentials)
@@ -665,7 +709,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			}
 
 		case *target.AzureImageTargetOptions:
-			targetResult = target.NewAzureImageTargetResult(nil)
+			targetResult = target.NewAzureImageTargetResult(nil, &artifact)
 			ctx := context.Background()
 
 			if impl.AzureConfig.Creds == nil {
@@ -795,7 +839,7 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			}
 
 		case *target.KojiTargetOptions:
-			targetResult = target.NewKojiTargetResult(nil)
+			targetResult = target.NewKojiTargetResult(nil, &artifact)
 			kojiServerURL, err := url.Parse(targetOptions.Server)
 			if err != nil {
 				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorInvalidTargetConfig, fmt.Sprintf("failed to parse Koji server URL: %v", err), nil)
@@ -839,16 +883,90 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 				break
 			}
 			logWithId.Info("[Koji] 🎉 Image successfully uploaded")
+
+			var manifest bytes.Buffer
+			err = json.Indent(&manifest, jobArgs.Manifest, "", "  ")
+			if err != nil {
+				logWithId.Warnf("[Koji] Indenting osbuild manifest failed: %v", err)
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorKojiBuild, err.Error(), nil)
+				break
+			}
+			logWithId.Info("[Koji] ⬆ Uploading the osbuild manifest")
+			manifestFilename := jobTarget.ImageName + ".manifest.json"
+			manifestHash, manifestSize, err := kojiAPI.Upload(&manifest, targetOptions.UploadDirectory, manifestFilename)
+			if err != nil {
+				logWithId.Warnf("[Koji] ⬆ upload failed: %v", err)
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorUploadingImage, err.Error(), nil)
+				break
+			}
+			logWithId.Info("[Koji] 🎉 Manifest successfully uploaded")
+
+			var osbuildLog bytes.Buffer
+			err = osbuildJobResult.OSBuildOutput.Write(&osbuildLog)
+			if err != nil {
+				logWithId.Warnf("[Koji] Converting osbuild log to text failed: %v", err)
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorKojiBuild, err.Error(), nil)
+				break
+			}
+			logWithId.Info("[Koji] ⬆ Uploading the osbuild output log")
+			osbuildOutputFilename := jobTarget.ImageName + ".osbuild.log"
+			osbuildOutputHash, osbuildOutputSize, err := kojiAPI.Upload(&osbuildLog, targetOptions.UploadDirectory, osbuildOutputFilename)
+			if err != nil {
+				logWithId.Warnf("[Koji] ⬆ upload failed: %v", err)
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorUploadingImage, err.Error(), nil)
+				break
+			}
+			logWithId.Info("[Koji] 🎉 osbuild output log successfully uploaded")
+
+			// Attach the manifest info to the koji target result, so that it
+			// it can be imported to the Koji build by the koji-finalize job.
+			var kojiManifestInfo *target.ManifestInfo
+			if manifestInfo != nil {
+				kojiManifestInfo = &target.ManifestInfo{
+					OSBuildComposerVersion: manifestInfo.OSBuildComposerVersion,
+				}
+				for _, composerDep := range manifestInfo.OSBuildComposerDeps {
+					dep := &target.OSBuildComposerDepModule{
+						Path:    composerDep.Path,
+						Version: composerDep.Version,
+					}
+					if composerDep.Replace != nil {
+						dep.Replace = &target.OSBuildComposerDepModule{
+							Path:    composerDep.Replace.Path,
+							Version: composerDep.Replace.Version,
+						}
+					}
+					kojiManifestInfo.OSBuildComposerDeps = append(kojiManifestInfo.OSBuildComposerDeps, dep)
+				}
+			}
+
 			targetResult.Options = &target.KojiTargetResultOptions{
-				ImageMD5:  imageHash,
-				ImageSize: imageSize,
+				Image: &target.KojiOutputInfo{
+					Filename:     jobTarget.ImageName,
+					ChecksumType: target.ChecksumTypeMD5,
+					Checksum:     imageHash,
+					Size:         imageSize,
+				},
+				OSBuildManifest: &target.KojiOutputInfo{
+					Filename:     manifestFilename,
+					ChecksumType: target.ChecksumTypeMD5,
+					Checksum:     manifestHash,
+					Size:         manifestSize,
+				},
+				Log: &target.KojiOutputInfo{
+					Filename:     osbuildOutputFilename,
+					ChecksumType: target.ChecksumTypeMD5,
+					Checksum:     osbuildOutputHash,
+					Size:         osbuildOutputSize,
+				},
+				OSBuildManifestInfo: kojiManifestInfo,
 			}
 
 		case *target.OCITargetOptions:
-			targetResult = target.NewOCITargetResult(nil)
+			targetResult = target.NewOCITargetResult(nil, &artifact)
 			// create an ociClient uploader with a valid storage client
 			var ociClient oci.Client
-			ociClient, err = oci.NewClient(&oci.ClientParams{
+			ociClient, err = impl.getOCI(oci.ClientParams{
 				User:        targetOptions.User,
 				Region:      targetOptions.Region,
 				Tenancy:     targetOptions.Tenancy,
@@ -868,23 +986,94 @@ func (impl *OSBuildJobImpl) Run(job worker.Job) error {
 			}
 			defer file.Close()
 			i, _ := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
-			imageID, err := ociClient.Upload(
+			bucket := impl.OCIConfig.Bucket
+			if targetOptions.Bucket != "" {
+				bucket = targetOptions.Bucket
+			}
+			namespace := impl.OCIConfig.Namespace
+			if targetOptions.Namespace != "" {
+				namespace = targetOptions.Namespace
+			}
+			err = ociClient.Upload(
 				fmt.Sprintf("osbuild-upload-%d", i),
-				targetOptions.Bucket,
-				targetOptions.Namespace,
+				bucket,
+				namespace,
 				file,
-				targetOptions.Compartment,
+			)
+			if err != nil {
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorUploadingImage, err.Error(), nil)
+				break
+			}
+
+			compartment := impl.OCIConfig.Compartment
+			if targetOptions.Compartment != "" {
+				compartment = targetOptions.Compartment
+			}
+			imageID, err := ociClient.CreateImage(
+				fmt.Sprintf("osbuild-upload-%d", i),
+				bucket,
+				namespace,
+				compartment,
 				jobTarget.ImageName,
 			)
+			if err != nil {
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorUploadingImage, err.Error(), nil)
+				break
+			}
+
+			logWithId.Info("[OCI] 🎉 Image uploaded and registered!")
+			targetResult.Options = &target.OCITargetResultOptions{ImageID: imageID}
+		case *target.OCIObjectStorageTargetOptions:
+			targetResult = target.NewOCIObjectStorageTargetResult(nil, &artifact)
+			// create an ociClient uploader with a valid storage client
+			ociClient, err := impl.getOCI(oci.ClientParams{
+				User:        targetOptions.User,
+				Region:      targetOptions.Region,
+				Tenancy:     targetOptions.Tenancy,
+				Fingerprint: targetOptions.Fingerprint,
+				PrivateKey:  targetOptions.PrivateKey,
+			})
 			if err != nil {
 				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorInvalidConfig, err.Error(), nil)
 				break
 			}
-			logWithId.Info("[OCI] 🎉 Image uploaded and registered!")
-			targetResult.Options = &target.OCITargetResultOptions{ImageID: imageID}
+			logWithId.Info("[OCI] 🔑 Logged in OCI")
+			logWithId.Info("[OCI] ⬆ Uploading the image")
+			file, err := os.Open(path.Join(outputDirectory, jobTarget.OsbuildArtifact.ExportName, jobTarget.OsbuildArtifact.ExportFilename))
+			if err != nil {
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorInvalidConfig, err.Error(), nil)
+				break
+			}
+			defer file.Close()
+			i, _ := rand.Int(rand.Reader, big.NewInt(math.MaxInt64))
+			bucket := impl.OCIConfig.Bucket
+			if targetOptions.Bucket != "" {
+				bucket = targetOptions.Bucket
+			}
+			namespace := impl.OCIConfig.Namespace
+			if targetOptions.Namespace != "" {
+				namespace = targetOptions.Namespace
+			}
+			err = ociClient.Upload(
+				fmt.Sprintf("osbuild-upload-%d", i),
+				bucket,
+				namespace,
+				file,
+			)
+			if err != nil {
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorUploadingImage, err.Error(), nil)
+				break
+			}
 
+			uri, err := ociClient.PreAuthenticatedRequest(fmt.Sprintf("osbuild-upload-%d", i), bucket, namespace)
+			if err != nil {
+				targetResult.TargetError = clienterrors.WorkerClientError(clienterrors.ErrorGeneratingSignedURL, err.Error(), nil)
+				break
+			}
+			logWithId.Info("[OCI] 🎉 Image uploaded and pre-authenticated request generated!")
+			targetResult.Options = &target.OCIObjectStorageTargetResultOptions{URL: uri}
 		case *target.ContainerTargetOptions:
-			targetResult = target.NewContainerTargetResult(nil)
+			targetResult = target.NewContainerTargetResult(nil, &artifact)
 			destination := jobTarget.ImageName
 
 			logWithId.Printf("[container] 📦 Preparing upload to '%s'", destination)

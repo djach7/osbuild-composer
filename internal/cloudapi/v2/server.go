@@ -120,6 +120,7 @@ func (s *Server) enqueueCompose(distribution distro.Distro, bp blueprint.Bluepri
 	ibp := blueprint.Convert(bp)
 	manifestSource, _, err := ir.imageType.Manifest(&ibp, ir.imageOptions, ir.repositories, manifestSeed)
 	if err != nil {
+		logrus.Warningf("ErrorEnqueueingJob, failed generating manifest: %v", err)
 		return id, HTTPErrorWithInternal(ErrorEnqueueingJob, err)
 	}
 
@@ -241,6 +242,7 @@ func (s *Server) enqueueKojiCompose(taskID uint64, server, name, version, releas
 		ibp := blueprint.Convert(bp)
 		manifestSource, _, err := ir.imageType.Manifest(&ibp, ir.imageOptions, ir.repositories, manifestSeed)
 		if err != nil {
+			logrus.Errorf("ErrorEnqueueingJob, failed generating manifest: %v", err)
 			return id, HTTPErrorWithInternal(ErrorEnqueueingJob, err)
 		}
 
@@ -414,6 +416,20 @@ func serializeManifest(ctx context.Context, manifestSource *manifest.Manifest, w
 
 	jobResult := &worker.ManifestJobByIDResult{
 		Manifest: nil,
+		ManifestInfo: worker.ManifestInfo{
+			OSBuildComposerVersion: common.BuildVersion(),
+		},
+	}
+
+	// add osbuild/images dependency info to job result
+	osbuildImagesDep, err := common.GetDepModuleInfoByPath(common.OSBuildImagesModulePath)
+	if err != nil {
+		// do not fail here and just log the error, because the module info is not available in tests.
+		// Failing here would make the unit tests fail. See https://github.com/golang/go/issues/33976
+		logWithId.Errorf("Error getting %s dependency info: %v", common.OSBuildImagesModulePath, err)
+	} else {
+		osbuildImagesDepModule := worker.ComposerDepModuleFromDebugModule(osbuildImagesDep)
+		jobResult.ManifestInfo.OSBuildComposerDeps = append(jobResult.ManifestInfo.OSBuildComposerDeps, osbuildImagesDepModule)
 	}
 
 	defer func() {
@@ -557,6 +573,11 @@ func serializeManifest(ctx context.Context, manifestSource *manifest.Manifest, w
 	}
 
 	ms, err := manifestSource.Serialize(depsolveResults.PackageSpecs, containerSpecs, ostreeCommitSpecs)
+	if err != nil {
+		reason := "Error serializing manifest"
+		jobResult.JobError = clienterrors.WorkerClientError(clienterrors.ErrorManifestGeneration, reason, nil)
+		return
+	}
 
 	jobResult.Manifest = ms
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/osbuild/images/internal/common"
 	"github.com/osbuild/images/internal/fdo"
+	"github.com/osbuild/images/internal/fsnode"
 	"github.com/osbuild/images/internal/ignition"
 	"github.com/osbuild/images/internal/oscap"
 	"github.com/osbuild/images/internal/users"
@@ -224,6 +225,9 @@ func osCustomizations(
 	osc.PwQuality = imageConfig.PwQuality
 	osc.WSLConfig = imageConfig.WSLConfig
 
+	osc.Files = append(osc.Files, imageConfig.Files...)
+	osc.Directories = append(osc.Directories, imageConfig.Directories...)
+
 	return osc
 }
 
@@ -231,7 +235,7 @@ func osCustomizations(
 
 func diskImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -239,12 +243,16 @@ func diskImage(workload workload.Workload,
 
 	img := image.NewDiskImage()
 	img.Platform = t.platform
-	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, customizations)
+	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, bp.Customizations)
 	img.Environment = t.environment
 	img.Workload = workload
 	img.Compression = t.compression
+	if bp.Minimal {
+		// Disable weak dependencies if the 'minimal' option is enabled
+		img.InstallWeakDeps = common.ToPtr(false)
+	}
 	// TODO: move generation into LiveImage
-	pt, err := t.getPartitionTable(customizations.GetFilesystems(), options, rng)
+	pt, err := t.getPartitionTable(bp.Customizations.GetFilesystems(), options, rng)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +265,7 @@ func diskImage(workload workload.Workload,
 
 func containerImage(workload workload.Workload,
 	t *imageType,
-	c *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -265,7 +273,7 @@ func containerImage(workload workload.Workload,
 	img := image.NewBaseContainer()
 
 	img.Platform = t.platform
-	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, c)
+	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, bp.Customizations)
 	img.Environment = t.environment
 	img.Workload = workload
 
@@ -276,7 +284,7 @@ func containerImage(workload workload.Workload,
 
 func liveInstallerImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -303,7 +311,7 @@ func liveInstallerImage(workload workload.Workload,
 
 func imageInstallerImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -323,6 +331,7 @@ func imageInstallerImage(workload workload.Workload,
 	}
 	img.AdditionalAnacondaModules = append(img.AdditionalAnacondaModules, "org.fedoraproject.Anaconda.Modules.Users")
 
+	customizations := bp.Customizations
 	img.Platform = t.platform
 	img.Workload = workload
 	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, customizations)
@@ -347,7 +356,7 @@ func imageInstallerImage(workload workload.Workload,
 
 func iotCommitImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -359,7 +368,7 @@ func iotCommitImage(workload workload.Workload,
 	d := t.arch.distro
 
 	img.Platform = t.platform
-	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, customizations)
+	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, bp.Customizations)
 	if !common.VersionLessThan(d.Releasever(), "38") {
 		// see https://github.com/ostreedev/ostree/issues/2840
 		img.OSCustomizations.Presets = []osbuild.Preset{
@@ -389,7 +398,7 @@ func iotCommitImage(workload workload.Workload,
 
 func iotContainerImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -399,7 +408,7 @@ func iotContainerImage(workload workload.Workload,
 	img := image.NewOSTreeContainer(commitRef)
 	d := t.arch.distro
 	img.Platform = t.platform
-	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, customizations)
+	img.OSCustomizations = osCustomizations(t, packageSets[osPkgsKey], containers, bp.Customizations)
 	if !common.VersionLessThan(d.Releasever(), "38") {
 		// see https://github.com/ostreedev/ostree/issues/2840
 		img.OSCustomizations.Presets = []osbuild.Preset{
@@ -430,7 +439,7 @@ func iotContainerImage(workload workload.Workload,
 
 func iotInstallerImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -445,6 +454,7 @@ func iotInstallerImage(workload workload.Workload,
 
 	img := image.NewAnacondaOSTreeInstaller(commit)
 
+	customizations := bp.Customizations
 	img.Platform = t.platform
 	img.ExtraBasePackages = packageSets[installerPkgsKey]
 	img.Users = users.UsersFromBP(customizations.GetUsers())
@@ -471,7 +481,7 @@ func iotInstallerImage(workload workload.Workload,
 
 func iotImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -485,6 +495,7 @@ func iotImage(workload workload.Workload,
 
 	distro := t.Arch().Distro()
 
+	customizations := bp.Customizations
 	img.Users = users.UsersFromBP(customizations.GetUsers())
 	img.Groups = users.GroupsFromBP(customizations.GetGroups())
 
@@ -547,7 +558,7 @@ func iotImage(workload workload.Workload,
 
 func iotSimplifiedInstallerImage(workload workload.Workload,
 	t *imageType,
-	customizations *blueprint.Customizations,
+	bp *blueprint.Blueprint,
 	options distro.ImageOptions,
 	packageSets map[string]rpmmd.PackageSet,
 	containers []container.SourceSpec,
@@ -559,6 +570,7 @@ func iotSimplifiedInstallerImage(workload workload.Workload,
 	}
 	rawImg := image.NewOSTreeDiskImage(commit)
 
+	customizations := bp.Customizations
 	rawImg.Users = users.UsersFromBP(customizations.GetUsers())
 	rawImg.Groups = users.GroupsFromBP(customizations.GetGroups())
 
@@ -683,4 +695,14 @@ func makeOSTreePayloadCommit(options *ostree.ImageOptions, defaultRef string) (o
 		Ref:  commitRef,
 		RHSM: options.RHSM,
 	}, nil
+}
+
+// initialSetupKickstart returns the File configuration for a kickstart file
+// that's required to enable initial-setup to run on first boot.
+func initialSetupKickstart() *fsnode.File {
+	file, err := fsnode.NewFile("/root/anaconda-ks.cfg", nil, "root", "root", []byte("# Run initial-setup on first boot\n# Created by osbuild\nfirstboot --reconfig\n"))
+	if err != nil {
+		panic(err)
+	}
+	return file
 }

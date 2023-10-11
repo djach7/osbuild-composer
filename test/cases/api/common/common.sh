@@ -55,6 +55,26 @@ function _instanceCheck() {
   verify_dirs_files_customization "$_ssh"
 
   verify_repository_customization "$_ssh"
+
+  verify_openscap_customization "$_ssh"
+
+  echo "✔️ Checking timezone customization"
+  TZ=$($_ssh timedatectl show  -p Timezone --value)
+  if [ "$TZ" != "Europe/Prague" ]; then
+      echo "Timezone $TZ isn't Europe/Prague"
+      exit 1
+  fi
+
+  echo "✔️ Checking firewall customization"
+  if $_ssh rpm -q firewalld; then
+      FW_SERVICES=$($_ssh sudo firewall-cmd --list-services)
+      if ! grep -q "nfs" <<< "$FW_SERVICES"; then
+          echo "firewalld nfs service isn't enabled: $FW_SERVICES"
+          exit 1
+      fi
+  else
+      echo "firewalld not available on host, that's fine"
+  fi
 }
 
 WORKER_REFRESH_TOKEN_PATH="/etc/osbuild-worker/token"
@@ -170,6 +190,29 @@ function verify_repository_customization {
 
   if [[ "$_error" == "1" ]]; then
     echo "Testing of custom repositories failed."
+    exit 1
+  fi
+}
+
+# Verify that tailoring file was created
+function verify_openscap_customization {
+  echo "✔️ Checking OpenSCAP customizations"
+  local _ssh="$1"
+  local _error=0
+
+  # NOTE: We are only checking the creation of the tailoring file and ensuring it exists
+  # since running openscap tests here requires more memory and causes some out-of-memory issues.
+  local tailoring_file_content
+  tailoring_file_content=$($_ssh cat /usr/share/xml/osbuild-openscap-data/tailoring.xml \
+      | grep 'idref="xccdf_org.ssgproject.content_rule_rpm_verify_permissions" selected="false"' -c
+  )
+  if [[ "$tailoring_file_content" -eq 0 ]]; then
+    echo "File /usr/share/xml/osbuild-openscap-data/tailoring.xml has wrong content"
+    _error=1
+  fi
+
+  if [[ "$_error" == "1" ]]; then
+    echo "Testing of OpenSCAP customizations has failed."
     exit 1
   fi
 }
